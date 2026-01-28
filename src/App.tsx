@@ -31,9 +31,11 @@ const App: React.FC = () => {
       // Pass risk level to backend
       const res = await axios.get<ApiResponse>(`/api/scan?risk=${riskLevel}`);
       
-      if (res.data.status === 'success' || res.data.status === 'cached') {
+      if (res.data.status === 'success') {
         setResults(res.data.results);
-        setLastUpdated(res.data.timestamp);
+        // Ensure timestamp is a number
+        const ts = typeof res.data.timestamp === 'number' ? res.data.timestamp : Date.now();
+        setLastUpdated(ts);
         setSystemStatus('ONLINE');
         if (res.data.results.length === 0) {
             setErrorMsg("No setups found. Try increasing Risk Level.");
@@ -46,7 +48,7 @@ const App: React.FC = () => {
     } catch (err) {
       console.error(err);
       setResults([]);
-      setErrorMsg("Connection Error.");
+      setErrorMsg("Connection Error. Ensure Python Backend is running.");
       setSystemStatus('OFFLINE');
     } finally {
       setLoading(false);
@@ -87,7 +89,7 @@ const App: React.FC = () => {
             setSearchError(res.data.message || 'Stock not found');
         }
     } catch (err: any) {
-        setSearchError(err.response?.data?.message || 'Failed to fetch stock data. Try valid symbol (e.g., INFY).');
+        setSearchError(err.response?.data?.detail || 'Failed to fetch stock data.');
     } finally {
         setSearchLoading(false);
     }
@@ -108,8 +110,8 @@ const App: React.FC = () => {
           systemStatus === 'OFFLINE' ? 'bg-red-900/50 text-red-400 border-b border-red-900' : 'bg-gray-800 text-gray-400'
       }`}>
           {systemStatus === 'ONLINE' ? <Wifi className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
-          {systemStatus === 'ONLINE' ? 'DATA FEED: ACTIVE (NSE/YAHOO)' : 
-           systemStatus === 'OFFLINE' ? 'DATA FEED: DISRUPTED - CHECK SERVER' : 'CONNECTING TO FEEDS...'}
+          {systemStatus === 'ONLINE' ? 'BACKEND: ACTIVE (PYTHON/YFINANCE)' : 
+           systemStatus === 'OFFLINE' ? 'BACKEND: OFFLINE - START MAIN.PY' : 'CONNECTING...'}
       </div>
 
       <div className="p-4">
@@ -117,7 +119,7 @@ const App: React.FC = () => {
         <header className="mb-6 flex flex-col items-center pt-2">
             <h1 className="text-3xl font-bold text-emerald-400 tracking-wider mb-2">INTRADAY HAWK</h1>
             <p className="text-xs text-gray-500 text-center max-w-md">
-            Real-time Intraday Screener.<br/>
+            Python Powered Scanner.<br/>
             Select your risk appetite below.
             </p>
         </header>
@@ -238,7 +240,7 @@ const App: React.FC = () => {
                 : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white'
             }`}
             >
-            {loading ? 'ANALYZING MARKET...' : `SCAN (${riskLevel} RISK)`}
+            {loading ? 'ANALYZING (PYTHON)...' : `SCAN (${riskLevel} RISK)`}
             </button>
             {lastUpdated && (
             <span className="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
@@ -313,18 +315,6 @@ const App: React.FC = () => {
             )
             )}
         </main>
-
-        {/* FOOTER */}
-        <footer className="mt-12 pt-8 border-t border-gray-800 text-center text-gray-600 text-[10px] space-y-2">
-            <p>
-            DATA DELAY WARNING: Prices are near-real-time (10-60s delay) via Yahoo Finance.
-            NSE real-time checks are best-effort.
-            </p>
-            <p className="max-w-2xl mx-auto">
-            DISCLAIMER: This tool is for educational purposes only. 
-            No financial advice provided. Trading carries significant risk.
-            </p>
-        </footer>
       </div>
     </div>
   );
