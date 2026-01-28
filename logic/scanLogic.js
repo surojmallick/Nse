@@ -1,8 +1,8 @@
-import { nseService } from '../services/nseService.js';
+import { googleService } from '../services/googleFinanceService.js';
 import { yahooService } from '../services/yahooService.js';
 import { calculateIndicators } from '../services/indicatorService.js';
 
-// Expanded Liquid List for better probability of finding setups
+// Liquid Stocks List
 const SYMBOLS = [
   'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 
   'ITC', 'KOTAKBANK', 'LT', 'SBIN', 'BHARTIARTL', 
@@ -12,7 +12,7 @@ const SYMBOLS = [
 export const runScan = async (riskLevel = 'MEDIUM') => {
   const results = [];
   
-  // Process in chunks to avoid rate limiting
+  // Process in chunks of 5
   const chunkSize = 5;
   for (let i = 0; i < SYMBOLS.length; i += chunkSize) {
     const chunk = SYMBOLS.slice(i, i + chunkSize);
@@ -20,35 +20,37 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
     // Process chunk in parallel
     const chunkPromises = chunk.map(async (stock) => {
         try {
-            // 1. Fetch Candles (Yahoo Finance)
+            // 1. Fetch Candles (Yahoo - Needed for Indicators)
             const candles = await yahooService.getCandles(stock);
             
-            // Need at least 55 candles for EMA50 + lookback
+            // Need historical data for EMA/RSI
             if (!candles || candles.length < 55) return; 
 
+            // 2. Fetch Live Price (Google - Needed for Accuracy)
+            // If Google fails, we fallback to the last Yahoo candle close
+            const googleData = await googleService.getStockDetails(stock);
+            
             const latestCandle = candles[candles.length - 1];
-            const price = latestCandle.close;
+            const price = googleData ? googleData.price : latestCandle.close;
 
-            // 2. Indicators
+            // 3. Indicators
             const ind = calculateIndicators(candles);
             if (!ind.ema9 || !ind.rsi) return;
 
-            // 3. Logic based on Risk Level
+            // 4. Logic based on Risk Level
             let valid = false;
             let reason = '';
             let stopLoss = 0;
             let target = 0;
 
-            // Common Signals
             const isUptrend = ind.ema9 > ind.ema21;
             const strongUptrend = isUptrend && (ind.ema21 > ind.ema50);
             const isRsiBullish = ind.rsi > 50;
-            const isRsiStrong = ind.rsi > 60 && ind.rsi < 80; // < 80 to avoid extreme overbought
+            const isRsiStrong = ind.rsi > 60 && ind.rsi < 80;
             const isVolumeHigh = latestCandle.volume > ind.averageVolume;
 
             switch (riskLevel) {
                 case 'HIGH':
-                // Loose: Uptrend OR RSI > 50
                 if (isUptrend || isRsiBullish) {
                     valid = true;
                     reason = isUptrend ? 'Trend Following' : 'Momentum Play';
@@ -56,7 +58,6 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
                 break;
 
                 case 'MEDIUM':
-                // Standard: Uptrend AND (RSI > 50 OR High Volume)
                 if (isUptrend && (isRsiBullish || isVolumeHigh)) {
                     valid = true;
                     reason = 'Trend + Momentum';
@@ -64,7 +65,6 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
                 break;
 
                 case 'LOW':
-                // Strict: Strong Uptrend + Strong RSI + Volume
                 if (strongUptrend && isRsiStrong && isVolumeHigh) {
                     valid = true;
                     reason = 'High Conviction Setup';
@@ -73,32 +73,28 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
             }
 
             if (valid) {
-                // 4. NSE Check (Optional / Best Effort)
-                let nseNote = "";
-                try {
-                    const nseLtp = await nseService.getLTP(stock);
-                    if (nseLtp) {
-                        const diff = Math.abs(price - nseLtp) / nseLtp;
-                        if (diff > 0.015) { // > 1.5% diff
-                             nseNote = " (Price Divergence)";
-                        }
-                    } else {
-                        nseNote = "";
+                // Price Validation Logic
+                let dataNote = "";
+                if (googleData) {
+                    // Check if Yahoo candle is stale compared to Google Price
+                    const diff = Math.abs(price - latestCandle.close) / price;
+                    if (diff > 0.01) {
+                        // If > 1% difference, trust Google but warn
+                        dataNote = " (Price Updated)";
                     }
-                } catch (e) {
-                    // Ignore NSE failures
+                } else {
+                    dataNote = " (Delayed)";
                 }
 
-                // 5. Risk Management
+                // Targets
                 const atrMultiplier = riskLevel === 'HIGH' ? 1.5 : (riskLevel === 'MEDIUM' ? 1.0 : 0.8);
-                const slDist = (ind.atr || (price * 0.01)) * atrMultiplier; // Fallback to 1% if ATR fails
+                const slDist = (ind.atr || (price * 0.01)) * atrMultiplier;
                 
                 stopLoss = price - slDist;
                 const rewardRatio = riskLevel === 'HIGH' ? 2 : 1.5;
                 target = price + (slDist * rewardRatio);
 
-                // Simple Confidence Score
-                let confidence = ind.rsi; // Base is RSI
+                let confidence = ind.rsi;
                 if (isUptrend) confidence += 10;
                 if (strongUptrend) confidence += 10;
                 if (isVolumeHigh) confidence += 10;
@@ -111,7 +107,7 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
                     stopLoss: stopLoss.toFixed(2),
                     target: target.toFixed(2),
                     confidenceScore: Math.min(99, confidence).toFixed(0),
-                    reason: `${reason} | RSI: ${ind.rsi.toFixed(0)}${nseNote}`,
+                    reason: `${reason} | RSI: ${ind.rsi.toFixed(0)}${dataNote}`,
                     timestamp: new Date().toISOString()
                 });
             }
@@ -123,12 +119,10 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
 
     await Promise.all(chunkPromises);
     
-    // Throttle slightly between chunks
     if (i + chunkSize < SYMBOLS.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
 
-  // Sort by confidence
   return results.sort((a,b) => parseFloat(b.confidenceScore) - parseFloat(a.confidenceScore));
 };

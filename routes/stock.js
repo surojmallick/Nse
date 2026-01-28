@@ -1,56 +1,49 @@
 import express from 'express';
 import { yahooService } from '../services/yahooService.js';
-import { nseService } from '../services/nseService.js';
+import { googleService } from '../services/googleFinanceService.js';
 
 const router = express.Router();
 
 // GET /api/stock/:symbol
 router.get('/:symbol', async (req, res) => {
     const rawSymbol = req.params.symbol.toUpperCase();
-    // Remove .NS if user added it, we handle it in service
     const symbol = rawSymbol.replace('.NS', '');
 
     try {
-        // 1. Get Chart Data (Yahoo)
-        const chartData = await yahooService.getIntradayChart(symbol);
+        // 1. Parallel Fetch: Chart (Yahoo) & Price (Google)
+        // We use Google for price because it's more reliable/real-time than Yahoo's delayed feed.
+        const [googleData, chartData] = await Promise.all([
+            googleService.getStockDetails(symbol),
+            yahooService.getIntradayChart(symbol)
+        ]);
         
-        if (!chartData) {
+        // Validation
+        if (!chartData && !googleData) {
             return res.status(404).json({ 
                 status: 'error', 
                 message: 'Stock not found or data unavailable' 
             });
         }
 
-        // 2. Try to get Real-time LTP from NSE (Optional)
-        // This provides better accuracy than Yahoo's delayed feed if it works
-        let ltp = chartData.currentPrice;
-        let source = 'Yahoo (Delayed)';
+        // 2. Merge Data
+        // Use Google data if available, otherwise fallback to Yahoo
+        const currentPrice = googleData ? googleData.price : (chartData?.currentPrice || 0);
+        const prevClose = chartData?.previousClose || currentPrice; // Fallback
         
-        try {
-            const nseLtp = await nseService.getLTP(symbol);
-            if (nseLtp) {
-                ltp = nseLtp;
-                source = 'NSE (Real-time)';
-            }
-        } catch (e) {
-            // Ignore NSE errors
-        }
-
-        // 3. Calculate Change
-        const prevClose = chartData.previousClose;
-        const change = ltp - prevClose;
-        const changePercent = (change / prevClose) * 100;
+        // Recalculate change if we have mixed data
+        const change = googleData ? googleData.change : (currentPrice - prevClose);
+        const changePercent = googleData ? googleData.changePercent : ((change / prevClose) * 100);
 
         res.json({
             status: 'success',
             data: {
                 symbol: symbol,
-                ltp: ltp,
+                ltp: currentPrice,
                 change: change.toFixed(2),
                 changePercent: changePercent.toFixed(2),
                 prevClose: prevClose,
-                source: source,
-                chart: chartData.candles
+                source: googleData ? 'Google Finance' : 'Yahoo (Delayed)',
+                chart: chartData?.candles || []
             }
         });
 
