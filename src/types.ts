@@ -16,3 +16,24 @@ export interface ApiResponse {
     message?: string;
     timestamp: number;
 }
+
+export interface ChartDataPoint {
+    time: number;
+    price: number;
+}
+
+export interface StockDetails {
+    symbol: string;
+    ltp: number;
+    change: string;
+    changePercent: string;
+    prevClose: number;
+    source: string;
+    chart: ChartDataPoint[];
+}
+
+export interface StockSearchResponse {
+    status: string;
+    data: StockDetails;
+    message?: string;
+}
