@@ -13,29 +13,28 @@ export const runScan = async () => {
   const results = [];
   const errors = [];
 
-  // Process sequentially to be gentle on APIs (or use small concurrency)
-  for (const stock of SYMBOLS) {
+  // Parallel processing using Promise.all to ensure execution stays within Vercel timeout limits (10s for Hobby)
+  const scanPromises = SYMBOLS.map(async (stock) => {
     try {
       // 1. Fetch Candles
       const candles = await yahooService.getCandles(stock);
       if (!candles || candles.length < 55) { // Need enough for EMA50
-         continue; 
+         return; 
       }
 
       const latestCandle = candles[candles.length - 1];
-      const prevCandle = candles[candles.length - 2]; // Completed candle
       
       // Use completed candle for signal confirmation, but latest price for execution checks
       const price = latestCandle.close;
 
       // 2. Pre-filter by Price Range
-      if (price < 50 || price > 15000) continue; // Adjusted upper limit for Nifty 50 stocks
+      if (price < 50 || price > 15000) return; 
 
       // 3. Calculate Indicators
       const ind = calculateIndicators(candles);
       
       if (!ind.ema9 || !ind.ema21 || !ind.ema50 || !ind.rsi || !ind.adx || !ind.atr || !ind.vwap) {
-        continue;
+        return;
       }
 
       // 4. Core Logic Checks
@@ -60,12 +59,13 @@ export const runScan = async () => {
       if (isUptrend && isHighVolume && isAboveVWAP && isRsiValid && isAdxStrong && isVolatileEnough) {
         
         // 5. NSE Validation (Strict)
+        // Since we filtered heavily above, NSE calls will be rare, reducing risk of rate limiting / timeout
         const nseLtp = await nseService.getLTP(stock);
         
         // If NSE fails, we cannot "Safely" trade according to constraints
         if (!nseLtp) {
             console.warn(`Skipping ${stock}: NSE LTP fetch failed.`);
-            continue; 
+            return; 
         }
 
         const priceDiff = Math.abs(price - nseLtp);
@@ -74,7 +74,7 @@ export const runScan = async () => {
         // Reject if > 0.5% difference (Arbitrage/Data lag too high)
         if (diffPercent > 0.5) {
             console.warn(`Skipping ${stock}: Price mismatch. Yahoo: ${price}, NSE: ${nseLtp}`);
-            continue;
+            return;
         }
 
         // 6. Risk Logic
@@ -86,10 +86,6 @@ export const runScan = async () => {
         // Target 1.5R (Conservative for intraday)
         const reward = risk * 1.5;
         const target = price + reward;
-
-        // RR Check (Implicitly 1.5 here, but logic requires check)
-        // If Risk is too small (consolidated), it's good. If Risk is huge, check target feasibility?
-        // Constraint: If RR < 1.2 -> no signal. Our calc forces 1.5R, so it passes.
 
         const confidence = Math.min(100, (ind.adx + ind.rsi) / 2).toFixed(1);
 
@@ -109,7 +105,9 @@ export const runScan = async () => {
     } catch (e) {
       errors.push(`${stock}: ${e.message}`);
     }
-  }
+  });
+
+  await Promise.all(scanPromises);
 
   return results;
 };

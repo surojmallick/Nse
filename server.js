@@ -17,14 +17,22 @@ app.use(express.json());
 // API Routes
 app.use('/api/scan', scanRoutes);
 
-// Serve Frontend (built to public directory)
-app.use(express.static(path.join(__dirname, 'public')));
+// Static files are handled by Vercel's CDN in production,
+// but we keep this for local 'npm start' behavior or specific setups.
+app.use(express.static(path.join(__dirname, 'dist'))); // Changed from public to dist to match Vite config
 
-// Catch-all for SPA
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Catch-all for SPA (Only active when running locally as a standalone server)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Conditional listener: Only listen if run directly (node server.js)
+// This prevents Vercel from trying to bind a port when importing the app as a serverless function
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+export default app;
