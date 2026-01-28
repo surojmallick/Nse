@@ -1,4 +1,6 @@
-import technicalindicators from 'technicalindicators';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const technicalindicators = require('technicalindicators');
 
 const { EMA, RSI, ADX, ATR, VWAP } = technicalindicators;
 
@@ -25,8 +27,7 @@ export const calculateIndicators = (candles) => {
   // ATR
   const atr = ATR.calculate({ period: 14, high, low, close });
 
-  // VWAP (Simple calculation for recent candles as library requires tick data usually, or strict input)
-  // Using the library's calculation if it supports OHLCV arrays
+  // VWAP
   const vwapInput = {
     high: high,
     low: low,
@@ -36,15 +37,14 @@ export const calculateIndicators = (candles) => {
   const vwap = VWAP.calculate(vwapInput);
 
   // Return the latest values, aligning arrays
-  // Note: Indicators result in shorter arrays than input. We need the last one.
   return {
     ema9: ema9[ema9.length - 1],
     ema21: ema21[ema21.length - 1],
     ema50: ema50[ema50.length - 1],
     rsi: rsi[rsi.length - 1],
-    adx: adx[adx.length - 1]?.adx, // ADX returns object { adx, pdi, mdi }
+    adx: adx[adx.length - 1]?.adx, 
     atr: atr[atr.length - 1],
     vwap: vwap[vwap.length - 1],
-    averageVolume: volume.slice(-20).reduce((a, b) => a + b, 0) / 20 // Simple 20 period Avg Vol
+    averageVolume: volume.slice(-20).reduce((a, b) => a + b, 0) / 20 
   };
 };
