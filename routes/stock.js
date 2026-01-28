@@ -1,6 +1,6 @@
 import express from 'express';
 import { yahooService } from '../services/yahooService.js';
-import { googleService } from '../services/googleFinanceService.js';
+import { growwService } from '../services/growwService.js';
 
 const router = express.Router();
 
@@ -10,15 +10,13 @@ router.get('/:symbol', async (req, res) => {
     const symbol = rawSymbol.replace('.NS', '');
 
     try {
-        // 1. Parallel Fetch: Chart (Yahoo) & Price (Google)
-        // We use Google for price because it's more reliable/real-time than Yahoo's delayed feed.
-        const [googleData, chartData] = await Promise.all([
-            googleService.getStockDetails(symbol),
+        // 1. Parallel Fetch: Chart (Yahoo) & Price (Groww)
+        const [growwData, chartData] = await Promise.all([
+            growwService.getLivePrice(symbol),
             yahooService.getIntradayChart(symbol)
         ]);
         
-        // Validation
-        if (!chartData && !googleData) {
+        if (!chartData && !growwData) {
             return res.status(404).json({ 
                 status: 'error', 
                 message: 'Stock not found or data unavailable' 
@@ -26,23 +24,23 @@ router.get('/:symbol', async (req, res) => {
         }
 
         // 2. Merge Data
-        // Use Google data if available, otherwise fallback to Yahoo
-        const currentPrice = googleData ? googleData.price : (chartData?.currentPrice || 0);
-        const prevClose = chartData?.previousClose || currentPrice; // Fallback
+        // Groww is primary for Price (LTP)
+        const currentPrice = growwData ? growwData.ltp : (chartData?.currentPrice || 0);
+        const prevClose = growwData ? growwData.close : (chartData?.previousClose || currentPrice);
         
-        // Recalculate change if we have mixed data
-        const change = googleData ? googleData.change : (currentPrice - prevClose);
-        const changePercent = googleData ? googleData.changePercent : ((change / prevClose) * 100);
+        // Recalculate change if necessary
+        const change = growwData ? growwData.change : (currentPrice - prevClose);
+        const changePercent = growwData ? growwData.changePercent : ((change / prevClose) * 100);
 
         res.json({
             status: 'success',
             data: {
                 symbol: symbol,
                 ltp: currentPrice,
-                change: change.toFixed(2),
-                changePercent: changePercent.toFixed(2),
+                change: change ? change.toFixed(2) : '0.00',
+                changePercent: changePercent ? changePercent.toFixed(2) : '0.00',
                 prevClose: prevClose,
-                source: googleData ? 'Google Finance' : 'Yahoo (Delayed)',
+                source: growwData ? 'Groww API' : 'Yahoo (Delayed)',
                 chart: chartData?.candles || []
             }
         });

@@ -1,4 +1,4 @@
-import { googleService } from '../services/googleFinanceService.js';
+import { growwService } from '../services/growwService.js';
 import { yahooService } from '../services/yahooService.js';
 import { calculateIndicators } from '../services/indicatorService.js';
 
@@ -17,21 +17,20 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
   for (let i = 0; i < SYMBOLS.length; i += chunkSize) {
     const chunk = SYMBOLS.slice(i, i + chunkSize);
     
-    // Process chunk in parallel
     const chunkPromises = chunk.map(async (stock) => {
         try {
-            // 1. Fetch Candles (Yahoo - Needed for Indicators)
+            // 1. Fetch Candles (Yahoo - Best for History/Indicators)
             const candles = await yahooService.getCandles(stock);
             
             // Need historical data for EMA/RSI
             if (!candles || candles.length < 55) return; 
 
-            // 2. Fetch Live Price (Google - Needed for Accuracy)
-            // If Google fails, we fallback to the last Yahoo candle close
-            const googleData = await googleService.getStockDetails(stock);
+            // 2. Fetch Live Price (Groww - Best for Realtime)
+            const growwData = await growwService.getLivePrice(stock);
             
             const latestCandle = candles[candles.length - 1];
-            const price = googleData ? googleData.price : latestCandle.close;
+            // Use Groww price if available, else Candle close
+            const price = growwData ? growwData.ltp : latestCandle.close;
 
             // 3. Indicators
             const ind = calculateIndicators(candles);
@@ -75,12 +74,11 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
             if (valid) {
                 // Price Validation Logic
                 let dataNote = "";
-                if (googleData) {
-                    // Check if Yahoo candle is stale compared to Google Price
+                if (growwData) {
+                    // Check for divergence between Live (Groww) and Candle (Yahoo)
                     const diff = Math.abs(price - latestCandle.close) / price;
                     if (diff > 0.01) {
-                        // If > 1% difference, trust Google but warn
-                        dataNote = " (Price Updated)";
+                        dataNote = " (Realtime Updated)";
                     }
                 } else {
                     dataNote = " (Delayed)";
@@ -119,8 +117,9 @@ export const runScan = async (riskLevel = 'MEDIUM') => {
 
     await Promise.all(chunkPromises);
     
+    // Throttle slightly
     if (i + chunkSize < SYMBOLS.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
 
