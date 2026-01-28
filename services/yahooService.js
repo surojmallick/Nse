@@ -1,42 +1,38 @@
-import axios from 'axios';
+import yahooFinance from 'yahoo-finance2';
+
+// Suppress non-critical notices
+yahooFinance.suppressNotices(['yahooSurvey']);
 
 class YahooService {
   // Fetch last 5 days of 5m candles (used for Scan)
   async getCandles(symbol) {
     try {
+      // Yahoo-finance2 handles the .NS suffix logic, but we ensure it's present
       const ticker = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`;
       
-      const response = await axios.get(url, {
-        params: {
-          interval: '5m',
-          range: '5d', 
-        },
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-        }
-      });
+      const queryOptions = {
+        period1: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 days ago
+        interval: '5m',
+      };
 
-      const result = response.data?.chart?.result?.[0];
-      if (!result) return null;
+      const result = await yahooFinance.chart(ticker, queryOptions);
 
-      const quotes = result.indicators.quote[0];
-      const timestamps = result.timestamp;
+      if (!result || !result.quotes || result.quotes.length === 0) return null;
 
-      if (!timestamps || !quotes || !quotes.close) return null;
-
-      const candles = timestamps.map((t, i) => ({
-        timestamp: t * 1000,
-        open: quotes.open[i],
-        high: quotes.high[i],
-        low: quotes.low[i],
-        close: quotes.close[i],
-        volume: quotes.volume[i]
+      // Map library output to our app's expected format
+      // Library returns Date objects for 'date', we convert to timestamp
+      const candles = result.quotes.map(q => ({
+        timestamp: q.date.getTime(),
+        open: q.open,
+        high: q.high,
+        low: q.low,
+        close: q.close,
+        volume: q.volume
       })).filter(c => c.close !== null && c.volume !== null);
 
       return candles;
     } catch (error) {
-      // console.error(`Yahoo Fetch failed for ${symbol}`);
+      console.error(`Yahoo Data Error (${symbol}):`, error.message);
       return null;
     }
   }
@@ -45,32 +41,22 @@ class YahooService {
   async getIntradayChart(symbol) {
     try {
       const ticker = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`;
       
-      const response = await axios.get(url, {
-        params: {
-          interval: '5m',
-          range: '5d', // Fetch 5d to guarantee we get the latest session even if 1d returns empty
-        },
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-        }
-      });
+      const queryOptions = {
+        period1: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 days
+        interval: '5m',
+      };
 
-      const result = response.data?.chart?.result?.[0];
-      if (!result) return null;
+      const result = await yahooFinance.chart(ticker, queryOptions);
+      const quote = await yahooFinance.quote(ticker);
 
-      const meta = result.meta;
-      const quotes = result.indicators.quote[0];
-      const timestamps = result.timestamp;
+      if (!result || !result.quotes || result.quotes.length === 0) return null;
 
-      if (!timestamps || !quotes) return null;
-
-      // Convert all data
-      let allCandles = timestamps.map((t, i) => ({
-        time: t * 1000,
-        price: quotes.close[i],
-        dateStr: new Date(t * 1000).toDateString()
+      // Filter and map candles
+      let allCandles = result.quotes.map(q => ({
+        time: q.date.getTime(),
+        price: q.close,
+        dateStr: q.date.toDateString()
       })).filter(c => c.price !== null);
 
       if (allCandles.length === 0) return null;
@@ -80,14 +66,14 @@ class YahooService {
       const todaysCandles = allCandles.filter(c => c.dateStr === lastDateStr);
 
       return {
-        symbol: meta.symbol,
-        currency: meta.currency,
-        previousClose: meta.chartPreviousClose,
-        currentPrice: meta.regularMarketPrice,
+        symbol: symbol,
+        currency: result.meta?.currency || 'INR',
+        previousClose: result.meta?.chartPreviousClose || quote.regularMarketPreviousClose,
+        currentPrice: quote.regularMarketPrice || result.meta?.regularMarketPrice,
         candles: todaysCandles
       };
     } catch (error) {
-      console.error(`Yahoo Chart failed for ${symbol}:`, error.message);
+      console.error(`Yahoo Search Error (${symbol}):`, error.message);
       return null;
     }
   }
