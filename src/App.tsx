@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import axios from 'axios';
-import { Search, X, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
+import { Search, X, TrendingUp, TrendingDown, AlertCircle, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { ScanResult, ApiResponse, StockSearchResponse, StockDetails } from './types';
 
@@ -12,6 +12,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [riskLevel, setRiskLevel] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('MEDIUM');
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
@@ -24,25 +25,27 @@ const App: React.FC = () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await axios.get<ApiResponse>('/api/scan');
+      // Pass risk level to backend
+      const res = await axios.get<ApiResponse>(`/api/scan?risk=${riskLevel}`);
+      
       if (res.data.status === 'success' || res.data.status === 'cached') {
         setResults(res.data.results);
         setLastUpdated(res.data.timestamp);
-        if (res.data.results.length === 0 && res.data.message) {
-            setErrorMsg(res.data.message);
+        if (res.data.results.length === 0) {
+            setErrorMsg("No setups found. Try increasing Risk Level.");
         }
       } else {
         setResults([]);
-        setErrorMsg("NO SAFE TRADE AVAILABLE");
+        setErrorMsg("Market data unavailable.");
       }
     } catch (err) {
       console.error(err);
       setResults([]);
-      setErrorMsg("NO SAFE TRADE AVAILABLE");
+      setErrorMsg("Connection Error.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [riskLevel]);
 
   // --- SEARCH LOGIC ---
   const handleSearch = async (e: React.FormEvent) => {
@@ -61,7 +64,7 @@ const App: React.FC = () => {
             setSearchError(res.data.message || 'Stock not found');
         }
     } catch (err: any) {
-        setSearchError(err.response?.data?.message || 'Failed to fetch stock data');
+        setSearchError(err.response?.data?.message || 'Failed to fetch stock data. Try valid symbol (e.g., INFY).');
     } finally {
         setSearchLoading(false);
     }
@@ -80,13 +83,13 @@ const App: React.FC = () => {
       <header className="mb-6 flex flex-col items-center">
         <h1 className="text-3xl font-bold text-emerald-400 tracking-wider mb-2">INTRADAY HAWK</h1>
         <p className="text-xs text-gray-500 text-center max-w-md">
-          Automatic screener using Yahoo Finance & NSE data. <br/>
-          EMA + RSI + VWAP + VOL Strategy.
+          Real-time Intraday Screener.<br/>
+          Select your risk appetite below.
         </p>
       </header>
 
       {/* SEARCH BAR */}
-      <div className="max-w-md mx-auto mb-8 relative z-50">
+      <div className="max-w-md mx-auto mb-6 relative z-50">
         <form onSubmit={handleSearch} className="relative">
             <input 
                 type="text" 
@@ -168,18 +171,40 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* SCREENER CONTROLS */}
+      {/* RISK CONTROLS */}
+      <div className="max-w-md mx-auto mb-6 flex justify-center bg-gray-800 p-1 rounded-full border border-gray-700">
+          <button 
+            onClick={() => setRiskLevel('LOW')}
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-full text-xs font-bold transition-all ${riskLevel === 'LOW' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+          >
+            <ShieldCheck className="w-3 h-3" /> LOW RISK
+          </button>
+          <button 
+            onClick={() => setRiskLevel('MEDIUM')}
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-full text-xs font-bold transition-all ${riskLevel === 'MEDIUM' ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+          >
+            <Shield className="w-3 h-3" /> MEDIUM
+          </button>
+          <button 
+            onClick={() => setRiskLevel('HIGH')}
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-full text-xs font-bold transition-all ${riskLevel === 'HIGH' ? 'bg-orange-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+          >
+            <ShieldAlert className="w-3 h-3" /> HIGH RISK
+          </button>
+      </div>
+
+      {/* SCREENER BUTTON */}
       <div className="flex flex-col items-center mb-8 gap-4 sticky top-4 z-40">
         <button
           onClick={fetchScan}
           disabled={loading}
-          className={`px-8 py-3 rounded-full font-bold shadow-lg transition-all ${
+          className={`px-8 py-3 rounded-full font-bold shadow-lg transition-all transform active:scale-95 ${
             loading 
               ? 'bg-gray-700 cursor-not-allowed text-gray-400' 
-              : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95'
+              : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white'
           }`}
         >
-          {loading ? 'SCANNING MARKETS...' : 'SCAN FOR OPPORTUNITIES'}
+          {loading ? 'ANALYZING MARKET...' : `SCAN (${riskLevel} RISK)`}
         </button>
         {lastUpdated && (
           <span className="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
@@ -191,9 +216,11 @@ const App: React.FC = () => {
       {/* RESULTS AREA */}
       <main className="max-w-4xl mx-auto">
         {errorMsg ? (
-          <div className="p-6 border border-red-800 bg-red-900/20 rounded-lg text-center">
-            <h3 className="text-xl font-bold text-red-400 mb-2">STATUS: {errorMsg}</h3>
-            <p className="text-sm text-gray-400">Market conditions may not meet high-probability criteria or data feeds are interrupted.</p>
+          <div className="p-6 border border-gray-700 bg-gray-800/50 rounded-lg text-center">
+            <h3 className="text-xl font-bold text-gray-300 mb-2">{errorMsg}</h3>
+            <p className="text-sm text-gray-500">
+                {riskLevel === 'LOW' ? 'Low risk rules are very strict.' : 'Market is currently choppy.'}
+            </p>
           </div>
         ) : results.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
@@ -247,7 +274,7 @@ const App: React.FC = () => {
           !loading && (
             <div className="text-center text-gray-500 mt-20 flex flex-col items-center">
               <TrendingUp className="w-16 h-16 opacity-20 mb-4" />
-              <p>Hit "SCAN" to search for intraday setups.</p>
+              <p>Hit "SCAN" to find opportunities.</p>
             </div>
           )
         )}
@@ -256,8 +283,8 @@ const App: React.FC = () => {
       {/* FOOTER */}
       <footer className="mt-12 pt-8 border-t border-gray-800 text-center text-gray-600 text-[10px] space-y-2">
         <p>
-          DATA DELAY WARNING: Prices are near-real-time (10-60s delay). 
-          NSE validation is server-side check only.
+          DATA DELAY WARNING: Prices are near-real-time (10-60s delay) via Yahoo Finance.
+          NSE real-time checks are best-effort.
         </p>
         <p className="max-w-2xl mx-auto">
           DISCLAIMER: This tool is for educational purposes only. 

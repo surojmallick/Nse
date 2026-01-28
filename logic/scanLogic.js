@@ -2,118 +2,114 @@ import { nseService } from '../services/nseService.js';
 import { yahooService } from '../services/yahooService.js';
 import { calculateIndicators } from '../services/indicatorService.js';
 
-// Hardcoded volatile/liquid stocks for demo reliability
+// Expanded list for better hit rate
 const SYMBOLS = [
   'RELIANCE', 'HDFCBANK', 'INFY', 'TCS', 'ICICIBANK',
   'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'LT', 'AXISBANK',
-  'TATAMOTORS', 'TATASTEEL', 'ADANIENT', 'BAJFINANCE', 'MARUTI'
+  'TATAMOTORS', 'TATASTEEL', 'ADANIENT', 'BAJFINANCE', 'MARUTI',
+  'WIPRO', 'HCLTECH', 'ASIANPAINT', 'TITAN', 'ULTRACEMCO'
 ];
 
-export const runScan = async () => {
+export const runScan = async (riskLevel = 'MEDIUM') => {
   const results = [];
-  const errors = [];
 
-  // Parallel processing using Promise.all to ensure execution stays within Vercel timeout limits
   const scanPromises = SYMBOLS.map(async (stock) => {
     try {
       // 1. Fetch Candles
       const candles = await yahooService.getCandles(stock);
-      if (!candles || candles.length < 55) { // Need enough for EMA50
-         return; 
-      }
+      if (!candles || candles.length < 55) return;
 
       const latestCandle = candles[candles.length - 1];
-      
-      // Use completed candle for signal confirmation, but latest price for execution checks
       const price = latestCandle.close;
 
-      // 2. Pre-filter by Price Range
-      if (price < 50 || price > 15000) return; 
-
-      // 3. Calculate Indicators
+      // 2. Indicators
       const ind = calculateIndicators(candles);
-      
-      if (!ind.ema9 || !ind.ema21 || !ind.ema50 || !ind.rsi || !ind.adx || !ind.atr || !ind.vwap) {
-        return;
+      if (!ind.ema9 || !ind.rsi) return;
+
+      // 3. Logic based on Risk Level
+      let valid = false;
+      let reason = '';
+      let stopLoss = 0;
+      let target = 0;
+
+      // Common Indicators
+      const isUptrend = ind.ema9 > ind.ema21;
+      const strongUptrend = isUptrend && (ind.ema21 > ind.ema50);
+      const isRsiBullish = ind.rsi > 50;
+      const isRsiStrong = ind.rsi > 60 && ind.rsi < 80;
+      const isVolatile = ind.atr > (price * 0.002);
+      const isVolumeHigh = latestCandle.volume > ind.averageVolume;
+
+      switch (riskLevel) {
+        case 'HIGH':
+          // Easy Rules: Just basic uptrend OR strong RSI
+          if (isUptrend || isRsiBullish) {
+            valid = true;
+            reason = isUptrend ? 'Basic Uptrend' : 'RSI Momentum';
+          }
+          break;
+
+        case 'MEDIUM':
+          // Standard: Uptrend AND (RSI OK OR Volume OK)
+          if (isUptrend && (isRsiBullish || isVolumeHigh)) {
+            valid = true;
+            reason = 'Trend + Momentum';
+          }
+          break;
+
+        case 'LOW':
+          // Strict: Strong Uptrend AND RSI Strong AND Volume High
+          if (strongUptrend && isRsiStrong && isVolumeHigh) {
+            valid = true;
+            reason = 'High Conviction Setup';
+          }
+          break;
       }
 
-      // 4. Core Logic Checks
-      // Trend: EMA Stack
-      const isUptrend = ind.ema9 > ind.ema21 && ind.ema21 > ind.ema50;
-      
-      // Volume: 1.5x average
-      const isHighVolume = latestCandle.volume >= (ind.averageVolume * 1.5);
-      
-      // Price > VWAP
-      const isAboveVWAP = price > ind.vwap;
-
-      // RSI Condition
-      const isRsiValid = ind.rsi >= 55 && ind.rsi <= 70;
-
-      // ADX Strength
-      const isAdxStrong = ind.adx > 20;
-
-      // ATR Volatility Check
-      const isVolatileEnough = ind.atr >= (price * 0.0025);
-
-      if (isUptrend && isHighVolume && isAboveVWAP && isRsiValid && isAdxStrong && isVolatileEnough) {
-        
-        // 5. NSE Validation (Optional / Fallback)
+      if (valid) {
+        // 4. NSE Check (Best Effort)
         let nseNote = "";
         let nseLtp = null;
-        
         try {
             nseLtp = await nseService.getLTP(stock);
-        } catch (err) {
-            console.warn(`NSE blocked or failed for ${stock}, continuing with Yahoo data.`);
-        }
-        
-        // If NSE works, perform arbitrage check
+        } catch (e) {}
+
         if (nseLtp) {
-            const priceDiff = Math.abs(price - nseLtp);
-            const diffPercent = (priceDiff / nseLtp) * 100;
-
-            // Reject if > 0.5% difference
-            if (diffPercent > 0.5) {
-                console.warn(`Skipping ${stock}: Price mismatch. Yahoo: ${price}, NSE: ${nseLtp}`);
-                return;
-            }
+            // If NSE available, check sanity
+             const diff = Math.abs(price - nseLtp) / nseLtp;
+             if (diff > 0.01) nseNote = " (Price Divergence)";
         } else {
-            // Fallback logic for Vercel/Cloud deployments where NSE blocks requests
-            nseNote = " (Yahoo Data Only)";
+             nseNote = " (Delayed)";
         }
 
-        // 6. Risk Logic
-        // SL = max(0.25% or 0.8 * ATR)
-        const slDist = Math.max(price * 0.0025, 0.8 * ind.atr);
-        const stopLoss = price - slDist;
-        const risk = price - stopLoss;
+        // 5. Targets (Risk adjusted)
+        const atrMultiplier = riskLevel === 'HIGH' ? 1.5 : (riskLevel === 'MEDIUM' ? 1.0 : 0.8);
+        const slDist = ind.atr * atrMultiplier;
         
-        // Target 1.5R (Conservative for intraday)
-        const reward = risk * 1.5;
-        const target = price + reward;
+        stopLoss = price - slDist;
+        const reward = slDist * (riskLevel === 'HIGH' ? 2 : 1.5);
+        target = price + reward;
 
-        const confidence = Math.min(100, (ind.adx + ind.rsi) / 2).toFixed(1);
+        const confidence = (ind.rsi + (isUptrend ? 20 : 0) + (isVolumeHigh ? 10 : 0)).toFixed(0);
 
         results.push({
           stock,
           direction: 'BUY',
           price: price.toFixed(2),
-          entryRange: `${(price * 0.9995).toFixed(2)} - ${(price * 1.0005).toFixed(2)}`,
+          entryRange: `${(price * 0.999).toFixed(2)} - ${(price * 1.001).toFixed(2)}`,
           stopLoss: stopLoss.toFixed(2),
           target: target.toFixed(2),
-          confidenceScore: confidence,
-          reason: `High Vol Breakout | RSI: ${ind.rsi.toFixed(1)} | ADX: ${ind.adx.toFixed(1)}${nseNote}`,
+          confidenceScore: Math.min(99, confidence).toString(),
+          reason: `${reason} | RSI: ${ind.rsi.toFixed(0)}${nseNote}`,
           timestamp: new Date().toISOString()
         });
       }
 
     } catch (e) {
-      errors.push(`${stock}: ${e.message}`);
+      // Ignore errors for individual stocks
     }
   });
 
   await Promise.all(scanPromises);
-
-  return results;
+  return results.sort((a,b) => parseFloat(b.confidenceScore) - parseFloat(a.confidenceScore));
 };

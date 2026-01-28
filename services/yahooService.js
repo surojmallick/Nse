@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 class YahooService {
-  // Fetch last 1 day of 5m candles
+  // Fetch last 5 days of 5m candles (used for Scan)
   async getCandles(symbol) {
     try {
       const ticker = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
@@ -36,12 +36,12 @@ class YahooService {
 
       return candles;
     } catch (error) {
-      console.error(`Yahoo Fetch failed for ${symbol}:`, error.message);
+      // console.error(`Yahoo Fetch failed for ${symbol}`);
       return null;
     }
   }
 
-  // New method for single stock search
+  // Get Detailed Intraday Chart (Used for Search)
   async getIntradayChart(symbol) {
     try {
       const ticker = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
@@ -50,7 +50,7 @@ class YahooService {
       const response = await axios.get(url, {
         params: {
           interval: '5m',
-          range: '1d', // Intraday specific
+          range: '5d', // Fetch 5d to guarantee we get the latest session even if 1d returns empty
         },
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
@@ -66,17 +66,25 @@ class YahooService {
 
       if (!timestamps || !quotes) return null;
 
-      const candles = timestamps.map((t, i) => ({
-        time: t * 1000, // Normalized for Recharts
+      // Convert all data
+      let allCandles = timestamps.map((t, i) => ({
+        time: t * 1000,
         price: quotes.close[i],
+        dateStr: new Date(t * 1000).toDateString()
       })).filter(c => c.price !== null);
+
+      if (allCandles.length === 0) return null;
+
+      // Extract only the last trading day's data
+      const lastDateStr = allCandles[allCandles.length - 1].dateStr;
+      const todaysCandles = allCandles.filter(c => c.dateStr === lastDateStr);
 
       return {
         symbol: meta.symbol,
         currency: meta.currency,
         previousClose: meta.chartPreviousClose,
         currentPrice: meta.regularMarketPrice,
-        candles
+        candles: todaysCandles
       };
     } catch (error) {
       console.error(`Yahoo Chart failed for ${symbol}:`, error.message);
