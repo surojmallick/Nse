@@ -1,0 +1,5 @@
+{
+  "name": "Intraday Hawk",
+  "description": "A production-ready intraday stock screener identifying high-probability setups using Yahoo Finance and NSE data.",
+  "requestFramePermissions": []
+}
