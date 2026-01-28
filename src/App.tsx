@@ -23,20 +23,6 @@ const App: React.FC = () => {
   const [searchResult, setSearchResult] = useState<StockDetails | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Initial Health Check
-  useEffect(() => {
-    const checkHealth = async () => {
-        try {
-            await axios.get('/api/scan?risk=MEDIUM');
-            setSystemStatus('ONLINE');
-            fetchScan(); // Auto-fetch on load
-        } catch (e) {
-            setSystemStatus('OFFLINE');
-        }
-    };
-    checkHealth();
-  }, []);
-
   // --- SCAN LOGIC ---
   const fetchScan = useCallback(async () => {
     setLoading(true);
@@ -67,6 +53,22 @@ const App: React.FC = () => {
     }
   }, [riskLevel]);
 
+  // Initial Health Check & Auto Scan
+  useEffect(() => {
+    const init = async () => {
+        try {
+            // Light check first
+            await axios.get('/api/health');
+            setSystemStatus('ONLINE');
+            // Then scan
+            fetchScan();
+        } catch (e) {
+            setSystemStatus('OFFLINE');
+        }
+    };
+    init();
+  }, [fetchScan]); 
+
   // --- SEARCH LOGIC ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,13 +82,12 @@ const App: React.FC = () => {
         const res = await axios.get<StockSearchResponse>(`/api/stock/${searchQuery.trim()}`);
         if (res.data.status === 'success') {
             setSearchResult(res.data.data);
-            setSystemStatus('ONLINE'); // Successful search proves system is online
+            setSystemStatus('ONLINE'); 
         } else {
             setSearchError(res.data.message || 'Stock not found');
         }
     } catch (err: any) {
         setSearchError(err.response?.data?.message || 'Failed to fetch stock data. Try valid symbol (e.g., INFY).');
-        // Search failure for one stock doesn't mean system is offline, so we don't set OFFLINE here
     } finally {
         setSearchLoading(false);
     }
@@ -108,7 +109,7 @@ const App: React.FC = () => {
       }`}>
           {systemStatus === 'ONLINE' ? <Wifi className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
           {systemStatus === 'ONLINE' ? 'DATA FEED: ACTIVE (NSE/YAHOO)' : 
-           systemStatus === 'OFFLINE' ? 'DATA FEED: DISRUPTED' : 'CONNECTING TO FEEDS...'}
+           systemStatus === 'OFFLINE' ? 'DATA FEED: DISRUPTED - CHECK SERVER' : 'CONNECTING TO FEEDS...'}
       </div>
 
       <div className="p-4">
