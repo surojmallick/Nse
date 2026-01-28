@@ -21,10 +21,10 @@ class NSEService {
           'User-Agent': this.userAgent,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
           'Upgrade-Insecure-Requests': '1'
-        }
+        },
+        timeout: 4000 // Short timeout for Vercel
       });
 
       const setCookie = response.headers['set-cookie'];
@@ -35,7 +35,8 @@ class NSEService {
       }
       return this.cookies;
     } catch (error) {
-      console.error('Error fetching NSE cookies:', error.message);
+      // Don't log full error on Vercel to keep logs clean, it is expected to fail often
+      console.warn('NSE Cookie Fetch Warning (likely blocked):', error.message);
       return null;
     }
   }
@@ -43,20 +44,22 @@ class NSEService {
   async getLTP(symbol) {
     try {
       const cookies = await this.getCookies();
-      if (!cookies) throw new Error('Could not retrieve cookies');
-
+      // On Vercel, cookies might be null if blocked, but we try anyway with empty cookies 
+      // sometimes headers alone work for cached endpoints
+      
       // NSE API endpoint for quote
       const url = `${this.baseUrl}/api/quote-equity?symbol=${encodeURIComponent(symbol)}`;
       
       const response = await axios.get(url, {
         headers: {
-          'Cookie': cookies,
+          'Cookie': cookies || '',
           'User-Agent': this.userAgent,
           'Accept': '*/*',
           'Host': 'www.nseindia.com',
-          'Connection': 'keep-alive'
+          'Connection': 'keep-alive',
+          'Referer': 'https://www.nseindia.com/get-quotes/equity?symbol=' + symbol
         },
-        timeout: 5000 
+        timeout: 3000 // Fast fail
       });
 
       if (response.data && response.data.priceInfo) {
@@ -65,7 +68,7 @@ class NSEService {
       return null;
     } catch (error) {
       // NSE is very strict, often returns 401/403 for server-side requests
-      console.error(`NSE LTP Fetch failed for ${symbol}: ${error.message}`);
+      // We swallow the error here so logic/scanLogic.js can decide to proceed or not
       return null;
     }
   }

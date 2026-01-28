@@ -14,7 +14,8 @@ class YahooService {
           range: '5d', // Get 5 days to ensure enough data for EMA50
         },
         headers: {
-            'User-Agent': 'Mozilla/5.0'
+            // Use a comprehensive User-Agent to pass basic cloud filters
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
         }
       });
 

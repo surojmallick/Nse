@@ -13,7 +13,7 @@ export const runScan = async () => {
   const results = [];
   const errors = [];
 
-  // Parallel processing using Promise.all to ensure execution stays within Vercel timeout limits (10s for Hobby)
+  // Parallel processing using Promise.all to ensure execution stays within Vercel timeout limits
   const scanPromises = SYMBOLS.map(async (stock) => {
     try {
       // 1. Fetch Candles
@@ -58,23 +58,29 @@ export const runScan = async () => {
 
       if (isUptrend && isHighVolume && isAboveVWAP && isRsiValid && isAdxStrong && isVolatileEnough) {
         
-        // 5. NSE Validation (Strict)
-        // Since we filtered heavily above, NSE calls will be rare, reducing risk of rate limiting / timeout
-        const nseLtp = await nseService.getLTP(stock);
+        // 5. NSE Validation (Optional / Fallback)
+        let nseNote = "";
+        let nseLtp = null;
         
-        // If NSE fails, we cannot "Safely" trade according to constraints
-        if (!nseLtp) {
-            console.warn(`Skipping ${stock}: NSE LTP fetch failed.`);
-            return; 
+        try {
+            nseLtp = await nseService.getLTP(stock);
+        } catch (err) {
+            console.warn(`NSE blocked or failed for ${stock}, continuing with Yahoo data.`);
         }
+        
+        // If NSE works, perform arbitrage check
+        if (nseLtp) {
+            const priceDiff = Math.abs(price - nseLtp);
+            const diffPercent = (priceDiff / nseLtp) * 100;
 
-        const priceDiff = Math.abs(price - nseLtp);
-        const diffPercent = (priceDiff / nseLtp) * 100;
-
-        // Reject if > 0.5% difference (Arbitrage/Data lag too high)
-        if (diffPercent > 0.5) {
-            console.warn(`Skipping ${stock}: Price mismatch. Yahoo: ${price}, NSE: ${nseLtp}`);
-            return;
+            // Reject if > 0.5% difference
+            if (diffPercent > 0.5) {
+                console.warn(`Skipping ${stock}: Price mismatch. Yahoo: ${price}, NSE: ${nseLtp}`);
+                return;
+            }
+        } else {
+            // Fallback logic for Vercel/Cloud deployments where NSE blocks requests
+            nseNote = " (Yahoo Data Only)";
         }
 
         // 6. Risk Logic
@@ -97,7 +103,7 @@ export const runScan = async () => {
           stopLoss: stopLoss.toFixed(2),
           target: target.toFixed(2),
           confidenceScore: confidence,
-          reason: `High Vol Breakout | RSI: ${ind.rsi.toFixed(1)} | ADX: ${ind.adx.toFixed(1)}`,
+          reason: `High Vol Breakout | RSI: ${ind.rsi.toFixed(1)} | ADX: ${ind.adx.toFixed(1)}${nseNote}`,
           timestamp: new Date().toISOString()
         });
       }
