@@ -17,18 +17,24 @@ class YahooService {
 
       const result = await yahooFinance.chart(ticker, queryOptions);
 
-      if (!result || !result.quotes || result.quotes.length === 0) return null;
+      if (!result || !result.quotes || !Array.isArray(result.quotes) || result.quotes.length === 0) {
+        return null;
+      }
 
       // Map library output to our app's expected format
-      // Library returns Date objects for 'date', we convert to timestamp
       const candles = result.quotes.map(q => ({
-        timestamp: q.date.getTime(),
+        timestamp: q.date ? new Date(q.date).getTime() : 0,
         open: q.open,
         high: q.high,
         low: q.low,
         close: q.close,
         volume: q.volume
-      })).filter(c => c.close !== null && c.volume !== null);
+      })).filter(c => 
+          c.timestamp > 0 && 
+          c.close !== null && 
+          c.close !== undefined && 
+          c.volume !== null
+      );
 
       return candles;
     } catch (error) {
@@ -47,17 +53,20 @@ class YahooService {
         interval: '5m',
       };
 
-      const result = await yahooFinance.chart(ticker, queryOptions);
-      const quote = await yahooFinance.quote(ticker);
+      // Parallel fetch for chart and quote
+      const [chartResult, quoteResult] = await Promise.all([
+         yahooFinance.chart(ticker, queryOptions).catch(() => null),
+         yahooFinance.quote(ticker).catch(() => null)
+      ]);
 
-      if (!result || !result.quotes || result.quotes.length === 0) return null;
+      if (!chartResult || !chartResult.quotes || chartResult.quotes.length === 0) return null;
 
       // Filter and map candles
-      let allCandles = result.quotes.map(q => ({
-        time: q.date.getTime(),
+      let allCandles = chartResult.quotes.map(q => ({
+        time: q.date ? new Date(q.date).getTime() : 0,
         price: q.close,
-        dateStr: q.date.toDateString()
-      })).filter(c => c.price !== null);
+        dateStr: q.date ? new Date(q.date).toDateString() : ''
+      })).filter(c => c.price !== null && c.time > 0);
 
       if (allCandles.length === 0) return null;
 
@@ -65,11 +74,14 @@ class YahooService {
       const lastDateStr = allCandles[allCandles.length - 1].dateStr;
       const todaysCandles = allCandles.filter(c => c.dateStr === lastDateStr);
 
+      const currentPrice = quoteResult?.regularMarketPrice || chartResult.meta?.regularMarketPrice || todaysCandles[todaysCandles.length-1].price;
+      const prevClose = quoteResult?.regularMarketPreviousClose || chartResult.meta?.chartPreviousClose || currentPrice;
+
       return {
         symbol: symbol,
-        currency: result.meta?.currency || 'INR',
-        previousClose: result.meta?.chartPreviousClose || quote.regularMarketPreviousClose,
-        currentPrice: quote.regularMarketPrice || result.meta?.regularMarketPrice,
+        currency: chartResult.meta?.currency || 'INR',
+        previousClose: prevClose,
+        currentPrice: currentPrice,
         candles: todaysCandles
       };
     } catch (error) {

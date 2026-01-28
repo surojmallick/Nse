@@ -21,7 +21,7 @@ class NSEService {
           'User-Agent': this.userAgent,
           'Accept': 'text/html,application/xhtml+xml',
         },
-        timeout: 2000 // Very short timeout, fail fast if blocked
+        timeout: 1000 // Ultra short timeout
       });
 
       const setCookie = response.headers['set-cookie'];
@@ -31,7 +31,6 @@ class NSEService {
       }
       return this.cookies;
     } catch (error) {
-      // Silent fail
       return null;
     }
   }
@@ -50,7 +49,7 @@ class NSEService {
           'Host': 'www.nseindia.com',
           'Referer': `https://www.nseindia.com/get-quotes/equity?symbol=${symbol}`
         },
-        timeout: 2000 // Fast fail
+        timeout: 1500 // Fast fail
       });
 
       if (response.data && response.data.priceInfo) {
